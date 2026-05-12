@@ -18,6 +18,6 @@ The goal is to identify, estimate, and validate an **ARIMA model** to generate r
 - **LaTeX** (Technical reporting)
 
 ## Files in this Repository
-`Time_Series_Analysis.R`: Full R script containing the statistical modeling.
+`Time_Series_Analysis.Rmd`: Full R script containing the statistical modeling.
 
 `Final_Report.pdf`: Detailed technical report explaining the methodology and results.
