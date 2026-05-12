@@ -1,0 +1,614 @@
+---
+title: "TS Project"
+author: "Marta Boix, Roberto Nsoni and Nuria Elizondo"
+date: "2026-04-24"
+output: 
+  html_document:
+    theme: simplex
+    df_print: paged
+    highlight: rstudio
+    toc: true
+    toc_float: true
+    toc_depth: 5
+---
+
+# Identification
+
+## Basic Data analysis
+### Load the TS and plot it
+```{r}
+serie=ts(read.table("RenewUSA.dat")[,1],start=1990,freq=12)
+
+plot(serie,main="Producció de Energía renovable en USA")    
+abline(v=1990:2019,col=4,lty=3)
+```
+### Transform ts into stationary
+
+```{r}
+m=by(serie,floor(time(serie)),mean)
+v=by(serie,floor(time(serie)),var)
+plot(v~m,xlab="Mean",ylab="Variance")
+text(m,v,1990:2019)
+
+boxplot(serie~floor(time(serie)))
+
+# Log transformation
+ln_serie = log(serie)
+plot(ln_serie)
+
+
+# Monthplot
+monthplot(ln_serie)
+
+# Seasonal difference
+d12_ln_serie = diff(ln_serie, 12)
+plot(d12_ln_serie)
+
+# Regular difference
+d1_d12_ln_serie = diff(d12_ln_serie)
+plot(d1_d12_ln_serie)
+
+var(ln_serie)
+var(d12_ln_serie)
+var(d1_d12_ln_serie)
+var(diff(d1_d12_ln_serie))
+
+energy_wt = d1_d12_ln_serie
+```
+
+## ACF and PACF
+We plot the ACF and the PACF of the stationary time series (energy_wt):
+```{r}
+par(mfrow=c(1,2))
+acf(energy_wt, ylim = c(-1,1), lag.max=72, lwd=2, 
+    col=c("red", rep(1, 11))) # 72 -> 6 years
+pacf(energy_wt, ylim = c(-1,1), lag.max=72, lwd=2, 
+    col=c(rep(1, 11), "red"))
+```
+
+## Proposal of models
+
+Looking at the red lags (the ones representing the seasonal part), we extract the following models:
+
+- **Seasonal part**:
+$$
+\left.
+\begin{aligned}
+\texttt{AR(3)} \\
+\texttt{MA(1)}
+\end{aligned}
+\right\}
+\implies \texttt{ARMA(1,1)}
+$$
+<br>
+
+We do the same but with the black lags for the regular part:
+
+- **Regular part**:
+
+$$
+\left.
+\begin{aligned}
+\texttt{AR(2)} \\
+\texttt{MA(2)}
+\end{aligned}
+\right\}
+\implies \texttt{ARMA(1,1)}
+$$
+<br>
+
+We propose 4 models choosing the simpler ones in each part:
+
+- **Proposed models**:
+
+\[\texttt{ARMA(1,1) + ARMA(1,1)} \implies \texttt{ARIMA(1,1,1)(1,1,1)}_{12}\]
+
+\[\texttt{MA(2) + MA(1)} \implies \texttt{ARIMA(0,1,2)(0,1,1)}_{12}\]
+
+\[\texttt{ARMA(1,1) + MA(1)} \implies \texttt{ARIMA(1,1,1)(0,1,1)}_{12}\]
+
+\[\texttt{AR(2) + MA(1)} \implies \texttt{ARIMA(2,1,0)(0,1,1)}_{12}\]
+
+
+
+
+<br>
+
+### Parameters estimation
+**Model 1**
+```{r}
+(m1 <- arima(ln_serie, order = c(1,1,1), 
+             seasonal = list(order=c(1,1,1), period=12)))
+
+cat("T-ratios:",round(m1$coef/sqrt(diag(m1$var.coef)),2))
+cat("Significant?:",abs(m1$coef/sqrt(diag(m1$var.coef)))>2)
+```
+
+
+**Model 2**
+```{r}
+(m2 <- arima(ln_serie, order = c(0,1,2), 
+             seasonal = list(order=c(0,1,1), period=12)))
+
+cat("T-ratios:",round(m2$coef/sqrt(diag(m2$var.coef)),2))
+cat("Significant?:",abs(m2$coef/sqrt(diag(m2$var.coef)))>2)
+```
+**Model 3**
+```{r}
+(m3 <- arima(ln_serie, order = c(1,1,1), 
+             seasonal = list(order=c(0,1,1), period=12)))
+
+cat("T-ratios:",round(m3$coef/sqrt(diag(m3$var.coef)),2))
+cat("Significant?:",abs(m3$coef/sqrt(diag(m3$var.coef)))>2)
+```
+**Model 4**
+
+```{r}
+(m4 <- arima(ln_serie, order = c(2,1,0), 
+             seasonal = list(order=c(0,1,1), period=12)))
+
+cat("T-ratios:",round(m4$coef/sqrt(diag(m4$var.coef)),2))
+cat("Significant?:",abs(m4$coef/sqrt(diag(m4$var.coef)))>2)
+```
+All the models have significant coefficients so we don't modify them. We will choose the first and the second model to validate them because those are the ones with the best AIC.
+
+## Validation (model 1)
+
+### 1. Root analysis
+```{r}
+# Roots if the AR polynomial
+Mod(polyroot(c(1,-m1$model$phi))) 
+
+# Roots if the MA polynomial
+Mod(polyroot(c(1,m1$model$theta)))
+```
+
+All the modulus of the roots in the AR polynomial are greater than 1. Therefore, the model is **causal/stationary**.
+
+We have the same behavior in the MA part: all the modulus of the roots are greater than 1, so the model is **invertible**.
+
+### 2. Plot of the residuals
+```{r}
+par(mfrow=c(1,2))
+resi1 <- resid(m1)
+plot(resi1); abline(h=0); abline(h=c(-3*sd(resi1),3*sd(resi1)), lty=3, col=4)
+
+scatter.smooth(sqrt(abs(resi1)), lpars=list(col=2))
+par(mfrow=c(1,1))
+```
+We cannot assume that the variance is constant. In the residuals plot we observe more spread values at the beginning of the time series than at the end. Also we can see that there is **one outlier** at the beginning.
+We confirm the non-constant variance (heterocedasticity) with the plot of the square root of the absolute residuals. The smoothing adjustment (the line in red) should be completely flat in order to have constant variance. In our plot, this line has curves.
+
+### 3. Normality
+```{r}
+par(mfrow=c(1,2))
+qqnorm(resi1); qqline(resi1, col=2, lwd=2)
+
+hist(resi1, breaks=20, freq=FALSE); curve(dnorm(x, mean=mean(resi1), sd=sd(resi1)), col=2,add=T)
+par(mfrow=c(1,1))
+```
+
+
+
+```{r}
+shapiro.test(resi1)
+```
+We can observe in the Q-Q plot that most of the points are aligned but in the extremes they are not, those seem to be outliers.
+The histogram is symmetrical and it seems to have a normal distribution.
+
+With the Shapiro-Wilk test, we don't reject the hypothesis of normality. Although this test is very sensitive to outliers, as we don't have many, this test reinforces our hypothesis of normality.
+
+In conclusion, we validate the normality of the residuals.
+
+### 4. AFC and PACF of residuals
+
+```{r}
+par(mfrow=c(1,2))
+acf(resi1, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c("red", rep(1, 11)))
+pacf(resi1, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c(rep(1, 11), "red"))
+par(mfrow=c(1,1))
+```
+
+We consider that all the lags, both from the ACF and the PACF are within the confidence band. There are some lags that are outside but they are far from the origin so we consider that it is by chance. Furthermore, they go off by a very little.
+
+
+```{r}
+# Ljung-Box test
+tsdiag(m1, gof.lag=72)
+```
+
+Observing the p-values of the Ljung-Box statistic, all the points are above the blue line we can have doubts with the two points touching the blue line, but we think that they are above. We don't reject the independence hypothesis.
+
+### 5. AIC and BIC
+
+```{r}
+AIC1 = AIC(m1)
+BIC1 = BIC(m1)
+
+cat("AIC1:", AIC1, ", BIC1:", BIC1)
+```
+### 6. Model fit excluding the last 12 observations
+```{r}
+# Series without the last 12 observations
+last=c(2017,12)
+ln_serie_2=window(ln_serie, end=last)
+
+# Model fit
+m11 <- arima(ln_serie_2, order = c(1,1,1), 
+             seasonal = list(order=c(1,1,1), period=12))
+m1; m11
+
+```
+
+We consider that the model is stable if the coefficients have the same magnitude, sign and significance. In this case they are, hence **the model is stable**.
+
+### 7. Forecast plots
+
+```{r}
+pred <- predict(m11, n.ahead=12)
+tu = pred$pred + qnorm(0.975) * pred$se
+tl = pred$pred - qnorm(0.975) * pred$se
+pr = pred$pred
+ts.plot(ln_serie, tl, tu, pr, lty=c(1,2,2,1), col=c(1,4,4,2), xlim=c(2014,2019), type="o")
+abline(v=2014:2019, lty=3, col=4)
+```
+
+### 8. Accuracy measures
+
+```{r}
+obs = window(ln_serie, start=c(2018, 1))
+RMSE1=sqrt(mean((obs-pr)*(obs-pr)))
+MAE1=mean(abs(obs-pr))
+RMSPE1=sqrt(mean(((obs-pr)/obs)*(obs-pr)/obs))
+MAPE1=mean(abs(obs-pr)/obs)
+
+cat("RMSE1 =", RMSE1, "\nMAE1 =", MAE1, "\nRMSPE1 =", RMSPE1, "\nMAPE1 =", MAPE1)
+```
+RMSE and MAE are in the time series' units. The RMSPE and the MAPE are in relative units.
+
+These metrics show that the **predictions are very good**; all the values are small. The MAPE is 0.361% which is in the interval [0,10]%.
+
+### 9. Average width of the predictions CI
+
+```{r}
+AVG_CI1 = mean(tu-tl)
+AVG_CI1
+```
+
+## Validation (Model 2)
+
+### 1. Root analysis
+
+```{r}
+# Roots of the AR polynomial
+Mod(polyroot(c(1,-m2$model$phi))) 
+
+# Roots of the MA polynomial
+Mod(polyroot(c(1,m2$model$theta)))
+```
+
+The AR polynomial is $\phi_p(B) = 1$. There is no AR part, so the polynomial has no roots. Therefore, the model is **causal/stationary**.
+
+The MA polynomial is not constant. As we can see in the result of *polyroot*, the modulus of all the roots of the polynomial are greater than 1, thus the model is **invertible**.
+
+### 2. Plot of the residuals
+```{r}
+par(mfrow=c(1,2))
+resi2 <- resid(m2)
+plot(resi2); abline(h=0); abline(h=c(-3*sd(resi2),3*sd(resi2)), lty=3, col=4)
+
+scatter.smooth(sqrt(abs(resi2)), lpars=list(col=2))
+par(mfrow=c(1,1))
+```
+The plots are very similar to the ones obtained with the first model. We obtain the same conclusions: **the variance is not constant** because in the residuals plot there are greater residuals at the beginning than at the end. Again, we observe 3 outliers. In the second plot, the red line is not constant.
+
+### 3. Normality
+```{r}
+par(mfrow=c(1,2))
+qqnorm(resi2); qqline(resi2, col=2, lwd=2)
+
+hist(resi2, breaks=20, freq=FALSE); curve(dnorm(x, mean=mean(resi1), sd=sd(resi2)), col=2,add=T)
+par(mfrow=c(1,1))
+```
+
+
+```{r}
+shapiro.test(resi2)
+```
+We obtain similar plots, but the histogram has a lot of residuals with values very close 0. The general shape seems to be normal, except for the large bar in the middle. 
+
+Using the Shapiro-Wilk test we don't reject the normality. We see that the p-value is very close to 0.05 which is the threshold of the test. This might me due to the presence of the large bar in the middle of the histogram or maybe to the outliers previously commented.
+
+
+### 4. AFC and PACF of residuals
+
+```{r}
+par(mfrow=c(1,2))
+acf(resi2, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c("red", rep(1, 11)))
+pacf(resi2, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c(rep(1, 11), "red"))
+par(mfrow=c(1,1))
+```
+
+We believe that all lags from both the ACF and PACF fall within the confidence interval. While some lags do extend outside of it, they are sufficiently distant from the origin, leading us to conclude that this is likely due to random variation.
+
+
+```{r}
+# Ljung-Box test
+tsdiag(m2, gof.lag=72)
+```
+
+Observing the p-values of the Ljung-Box statistic, **we reject the independence hypothesis**. Compared with the first model, there are the same number of p-values above the blue line. From the 35th lag the dots are under the line.
+
+### 5. AIC and BIC
+
+```{r}
+AIC2 = AIC(m2)
+BIC2 = BIC(m2)
+
+cat("AIC2:", AIC2, ", BIC2:", BIC2)
+```
+
+### 6. Model fit excluding the last 12 observations
+```{r}
+# Series without the last 12 observations
+last=c(2017,12)
+ln_serie_2=window(ln_serie, end=last)
+
+# Model fit
+m21 <- arima(ln_serie_2, order = c(0,1,2), 
+             seasonal = list(order=c(0,1,1), period=12))
+m2; m21
+
+```
+
+If all of the coefficients have the same magnitude, sign, and significance, we consider the model to be stable. Since they are in this specific case, **the model is stable**.
+
+### 7. Forecast plots
+
+```{r}
+pred <- predict(m21, n.ahead=12)
+tu = pred$pred + qnorm(0.975) * pred$se
+tl = pred$pred - qnorm(0.975) * pred$se
+pr = pred$pred
+ts.plot(ln_serie, tl, tu, pr, lty=c(1,2,2,1), col=c(1,4,4,2), xlim=c(2014,2019), type="o")
+abline(v=2014:2019, lty=3, col=4)
+
+```
+
+### 8. Accuracy measures
+
+```{r}
+obs = window(ln_serie, start=c(2018, 1))
+RMSE2=sqrt(mean((obs-pr)*(obs-pr)))
+MAE2=mean(abs(obs-pr))
+RMSPE2=sqrt(mean(((obs-pr)/obs)*(obs-pr)/obs))
+MAPE2=mean(abs(obs-pr)/obs)
+
+cat("RMSE2 =", RMSE2, "\nMAE2 =", MAE2, "\nRMSPE2 =", RMSPE2, "\nMAPE2 =", MAPE2)
+```
+These measures demonstrate how accurate the forecasts are; all of the results are low. The MAPE falls inside the interval [0,10]% at 0.379%.
+
+### 9. Average width of the predictions CI
+```{r}
+AVG_CI2 = mean(tu-tl)
+AVG_CI2
+```
+
+## Comparison
+
+```{r}
+comparison <- data.frame(
+  Model = c("ARIMA(1,1,1)(1,1,1)_12", "ARIMA(0,1,2)(0,1,1)_12"),
+  RMSE = c(RMSE1, RMSE2),
+  MAE = c(MAE1, MAE2),
+  RMSPE = c(RMSPE1, RMSPE2),
+  MAPE = c(MAPE1, MAPE2),
+  AIC = c(AIC1, AIC2),
+  BIC = c(BIC1, BIC2),
+  AVG_CI = c(AVG_CI1, AVG_CI2)
+)
+
+comparison
+```
+Both models have very similar results. The error metrics for the first model are slightly lower and it has a lower BIC. However, the second model has a better AIC and the average width of the confidence intervals is narrower.
+
+Therefore, there isn't a 'better' model. We conclude that the first model is better for model interpretation and inference, while the second model is better for prediction.
+
+Further investigation of these models is required, possibly including the removal of outliers, in order to properly achieve model validation. Therefore, the models proposed in this study cannot yet be considered fully validated.
+
+## Forecasting
+
+Forecast for the chosen model (model 1):
+```{r}
+pred_real <- predict(m1, n.ahead=12)
+tu_r = pred_real$pred + qnorm(0.975) * pred_real$se
+tl_r = pred_real$pred - qnorm(0.975) * pred_real$se
+pr_r = pred_real$pred
+# Plot with the confidence intervals
+ts.plot(ln_serie, tl_r, tu_r, pr_r, lty=c(1,2,2,1), col=c(1,4,4,2), xlim=c(2015,2020), type="o")
+abline(v=2015:2020, lty=3, col=4)
+
+# Plot of the whole time series with the forecast and without the log transformation
+serie_pred = ts(c(ln_serie, pr_r), start = 1990, freq = 12)
+plot(exp(serie_pred), ylab="")
+abline(v=1990:2020,col=4,lty=3)
+
+# Table with the results
+months <- c("Jan 2019","Feb 2019","Mar 2019","Apr 2019",
+            "May 2019","Jun 2019","Jul 2019","Aug 2019",
+            "Sep 2019","Oct 2019","Nov 2019","Dec 2019")
+
+pred_table <- data.frame(
+  Time = months,
+  Forecast = as.numeric(exp(pr_r)),
+  Lower = as.numeric(exp(tl_r)),
+  Upper = as.numeric(exp(tu_r))
+)
+
+pred_table
+```
+
+
+# Outiler treatment
+## Outlier removal
+```{r}
+source("atipics2.r")
+mod.atip=outdetec(m1,dif=c(1,12),crit=2.9,LS=T)
+mod.atip
+atipics=mod.atip$atip[order(mod.atip$atip[,1]),]
+meses=c("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+data.frame(atipics,
+           Fecha=paste(meses[(atipics[,1]-1)%%12+1],start(ln_serie)[1]+((atipics[,1]-1)%/%12)),
+           PercVar=exp(atipics[,3])*100)
+
+```
+After doing an outlier detection, we see 13 outliers. The observation with the highest ABS_L_Ratio is the 133, with a vale of 3.851801. The outlier with the lowest one is the 118, with a value of 2.999260.
+
+```{r}
+# Removing the outliers
+ln_serie.lin=lineal(ln_serie,mod.atip$atip)
+serie.lin=exp(ln_serie.lin)
+
+plot(serie)
+lines(exp(ln_serie.lin),col=2)
+plot(ln_serie-ln_serie.lin)
+
+```
+
+## Transform the ts into stationary
+
+```{r}
+
+monthplot(ln_serie.lin)
+
+# Seasonal difference
+d12_ln_serie.lin = diff(ln_serie.lin, 12)
+plot(d12_ln_serie.lin)
+
+# Regular difference
+d1_d12_ln_serie.lin = diff(d12_ln_serie.lin)
+plot(d1_d12_ln_serie.lin)
+
+var(d12_ln_serie.lin)
+var(d1_d12_ln_serie.lin)
+var(diff(d1_d12_ln_serie.lin))
+```
+
+## ACF and PACF
+
+```{r}
+energy_wt.lin = d1_d12_ln_serie.lin
+
+par(mfrow=c(1,2))
+acf(energy_wt.lin, ylim = c(-1,1), lag.max=72, lwd=2, 
+    col=c("red", rep(1, 11))) # 72 -> 6 years
+pacf(energy_wt.lin, ylim = c(-1,1), lag.max=72, lwd=2, 
+    col=c(rep(1, 11), "red"))
+```
+
+## Proposal of models
+
+Looking at the red lags (the ones representing the seasonal part), we extract the following models:
+
+- **Seasonal part**:
+$$
+\begin{aligned}
+\texttt{AR(4)} \\
+\texttt{MA(1)}
+\end{aligned}
+$$
+<br>
+
+We do the same but with the black lags for the regular part:
+
+- **Regular part**:
+
+$$
+\left.
+\begin{aligned}
+\texttt{AR(3)} \\
+\texttt{MA(2)}
+\end{aligned}
+\right\}
+\implies \texttt{ARMA(1,1)}
+$$
+<br>
+
+We propose 2 models choosing the simpler ones in each part:
+
+- **Proposed models**:
+
+\[\texttt{ARMA(1,1) + MA(1)} \implies \texttt{ARIMA(1,1,1)(0,1,1)}_{12}\]
+
+\[\texttt{MA(2) + MA(1)} \implies \texttt{ARIMA(0,1,2)(0,1,1)}_{12}\]
+
+<br>
+
+```{r}
+(m1.lin <- arima(ln_serie.lin, order = c(1,1,1), 
+             seasonal = list(order=c(0,1,1), period=12)))
+
+cat("T-ratios:",round(m1.lin$coef/sqrt(diag(m1.lin$var.coef)),2))
+cat("Significant?:",abs(m1.lin$coef/sqrt(diag(m1.lin$var.coef)))>2)
+```
+```{r}
+(m2.lin <- arima(ln_serie.lin, order = c(0,1,2), 
+             seasonal = list(order=c(0,1,1), period=12)))
+
+cat("T-ratios:",round(m2.lin$coef/sqrt(diag(m2.lin$var.coef)),2))
+cat("Significant?:",abs(m2.lin$coef/sqrt(diag(m2.lin$var.coef)))>2)
+
+```
+
+We select the model m1.lin because it has the lowest AIC
+
+
+## Validation
+
+### Root analysis
+```{r}
+# Roots of the AR polynomial
+Mod(polyroot(c(1,-m1.lin$model$phi)))
+# Roots of the MA polynomial
+Mod(polyroot(c(1,m1.lin$model$theta)))
+```
+All the roots are greater than 1, so the model is **causal** and **stationary**.
+
+### Plot of the residuals
+```{r}
+par(mfrow=c(1,2))
+resi <- resid(m1.lin)
+plot(resi); abline(h=0); abline(h=c(-3*sd(resi),3*sd(resi)), lty=3, col=4)
+
+scatter.smooth(sqrt(abs(resi)), lpars=list(col=2))
+```
+
+### Normality
+```{r}
+par(mfrow=c(1,2))
+qqnorm(resi); qqline(resi, col=2, lwd=2)
+
+hist(resi, breaks=20, freq=FALSE); curve(dnorm(x, mean=mean(resi), sd=sd(resi)), col=2,add=T)
+par(mfrow=c(1,1))
+
+shapiro.test(resi)
+```
+
+### ACF and PACF of the residuals
+```{r}
+par(mfrow=c(1,2))
+acf(resi, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c("red", rep(1, 11)))
+pacf(resi, ylim = c(-1,1), lag.max=60, lwd=2, 
+    col=c(rep(1, 11), "red"))
+par(mfrow=c(1,1))
+
+# Ljung-Box test
+tsdiag(m1.lin, gof.lag=72)
+```
+
+
